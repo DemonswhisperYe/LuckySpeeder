@@ -27,6 +27,7 @@ SOFTWARE.
 
 #include "LuckySpeeder.h"
 #include "fishhook.h"
+#include <dlfcn.h>
 #include <mach-o/dyld.h>
 #include <mach-o/getsect.h>
 #include <os/lock.h>
@@ -37,7 +38,6 @@ SOFTWARE.
 #if !TARGET_OS_TV
 #include "hwbphook.h"
 #include "port_clock_gettime.h"
-#include <dlfcn.h>
 #endif
 
 static float timeScale_speed = 1.0;
@@ -118,17 +118,22 @@ int hook_timeScale(void) {
   if (*(uintptr_t *)(code_section_address + function_data_offset)) {
     original_timeScale = *(void (**)(float))(function_data_offset + code_section_address);
   } else {
-    uint32_t instruction_operand = *(uint32_t *)(il2cpp_section_base + 8);
-    uint8_t *code_section_start = (uint8_t *)(il2cpp_section_base + 8);
-    uintptr_t instruction_offset = (4 * instruction_operand) & 0xFFFFFFC;
-    uintptr_t address_offset = (4 * (instruction_operand & 0x3FFFFFF)) | 0xFFFFFFFFF0000000LL;
-
-    if (((4 * instruction_operand) & 0x8000000) != 0)
-      function_offset = address_offset;
-    else
-      function_offset = instruction_offset;
-
-    original_timeScale = (void (*)(float))((uintptr_t (*)(void *))&code_section_start[function_offset])(time_scale_function_address);
+    typedef void *(*resolve_icall_t)(const char *);
+    resolve_icall_t resolve_icall = (resolve_icall_t)dlsym(RTLD_DEFAULT, "il2cpp_resolve_icall");
+    if (resolve_icall) {
+      original_timeScale = (void (*)(float))resolve_icall((const char *)time_scale_function_address);
+    } else {
+      for (int i = 2; i < 10; i++) {
+        uint32_t bl_candidate = *(uint32_t *)(il2cpp_section_base + i * 4);
+        if ((bl_candidate & 0xFC000000) != 0x94000000) continue;
+        int32_t imm26 = bl_candidate & 0x3FFFFFF;
+        if (imm26 & 0x2000000) imm26 |= (int32_t)0xFC000000;
+        uintptr_t bl_addr = il2cpp_section_base + (uintptr_t)i * 4;
+        uintptr_t target = bl_addr + (intptr_t)imm26 * 4;
+        original_timeScale = (void (*)(float))((resolve_icall_t)target)((const char *)time_scale_function_address);
+        break;
+      }
+    }
   }
 
   if (original_timeScale) {
