@@ -182,10 +182,10 @@ int hook_anti_popup(void) {
   }
 
   // NSDate timeIntervalSinceReferenceDate swizzle (Shield unified time)
-  orig_NSDate_timeIntervalSinceReferenceDate = (void *)class_getMethodImplementation(
+  orig_date_timeIntervalSinceReferenceDate = (NSTimeInterval (*)(id, SEL))class_getMethodImplementation(
       objc_getMetaClass("NSDate"),
       @selector(timeIntervalSinceReferenceDate));
-  if (orig_NSDate_timeIntervalSinceReferenceDate) {
+  if (orig_date_timeIntervalSinceReferenceDate) {
     Method nm = class_getClassMethod([NSDate class],
                                       @selector(timeIntervalSinceReferenceDate));
     if (nm) {
