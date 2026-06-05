@@ -44,6 +44,7 @@ SOFTWARE.
 #import "LuckySpeeder.h"
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
+#import <os/lock.h>
 
 static float g_speed = 1.0;
 static BOOL g_hooked = NO;
