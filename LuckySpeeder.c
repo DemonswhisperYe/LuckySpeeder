@@ -542,17 +542,28 @@ static uint64_t (*orig_shield_mach_absolute_time)(void) = NULL;
 static uint64_t (*orig_shield_mach_continuous_time)(void) = NULL;
 static double   (*orig_shield_CACurrentMediaTime)(void) = NULL;
 static double   (*orig_shield_CFAbsoluteTimeGetCurrent)(void) = NULL;
+static double   vt_ca_offset_seconds = 0.0;
+static double   vt_cf_offset_seconds = 0.0;
+static bool     vt_ca_offset_initialized = false;
+static bool     vt_cf_offset_initialized = false;
 static void     (*orig_shield_exit)(int) = NULL;
 static void     (*orig_shield__exit)(int) = NULL;
 static void     (*orig_shield_abort)(void) = NULL;
 static int      (*orig_shield_kill)(int, int) = NULL;
 static int      (*orig_shield_raise)(int) = NULL;
 
+static uint64_t vt_real_mach_absolute_time(void) {
+  if (orig_shield_mach_absolute_time) {
+    return orig_shield_mach_absolute_time();
+  }
+  return mach_absolute_time();
+}
+
 static void vt_ensure_init(void) {
   if (vt_initialized) return;
   mach_timebase_info(&vt_tb);
   vt_ns_per_tick = (double)vt_tb.numer / (double)vt_tb.denom;
-  uint64_t now = mach_absolute_time();
+  uint64_t now = vt_real_mach_absolute_time();
   vt_base_real = now;
   vt_base_fake = now;
   vt_initialized = true;
@@ -572,7 +583,7 @@ static uint64_t vt_now_mach(void) {
   os_unfair_lock_lock(&vt_lock);
   vt_ensure_init();
   vt_smooth(&vt_speed, vt_target_speed);
-  uint64_t now = mach_absolute_time();
+  uint64_t now = vt_real_mach_absolute_time();
   uint64_t elapsed = now - vt_base_real;
   double elapsed_ns = (double)elapsed * vt_ns_per_tick;
   if (elapsed_ns > VT_MAX_DELTA_MS * 1000000.0) {
@@ -619,12 +630,22 @@ static uint64_t my_shield_mach_continuous_time(void) {
 
 static double my_shield_CACurrentMediaTime(void) {
   uint64_t fake_mach = vt_now_mach();
-  return (double)fake_mach * vt_ns_per_tick / 1000000000.0;
+  double fake_seconds = (double)fake_mach * vt_ns_per_tick / 1000000000.0;
+  if (orig_shield_CACurrentMediaTime && !vt_ca_offset_initialized) {
+    vt_ca_offset_seconds = orig_shield_CACurrentMediaTime() - fake_seconds;
+    vt_ca_offset_initialized = true;
+  }
+  return fake_seconds + vt_ca_offset_seconds;
 }
 
 static double my_shield_CFAbsoluteTimeGetCurrent(void) {
   uint64_t fake_mach = vt_now_mach();
-  return (double)fake_mach * vt_ns_per_tick / 1000000000.0;
+  double fake_seconds = (double)fake_mach * vt_ns_per_tick / 1000000000.0;
+  if (orig_shield_CFAbsoluteTimeGetCurrent && !vt_cf_offset_initialized) {
+    vt_cf_offset_seconds = orig_shield_CFAbsoluteTimeGetCurrent() - fake_seconds;
+    vt_cf_offset_initialized = true;
+  }
+  return fake_seconds + vt_cf_offset_seconds;
 }
 
 // ── Shield exit/abort/kill/raise interception ──
@@ -697,9 +718,6 @@ int hook_shield(void) {
   };
   r = rebind_symbols(exit_bindings, 5);
   if (r != 0) return r;
-
-  orig_shield_CACurrentMediaTime = dlsym(RTLD_DEFAULT, "CACurrentMediaTime");
-  orig_shield_CFAbsoluteTimeGetCurrent = dlsym(RTLD_DEFAULT, "CFAbsoluteTimeGetCurrent");
 
   hooked = 1;
   return 0;
