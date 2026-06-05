@@ -30,7 +30,10 @@ SOFTWARE.
 #include <dlfcn.h>
 #include <mach-o/dyld.h>
 #include <mach-o/getsect.h>
+#include <mach/mach_time.h>
 #include <os/lock.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -517,4 +520,204 @@ void set_Godot_Engine(float value) {
 
 void reset_Godot_Engine(void) {
   set_Godot_Engine(1.0);
+}
+
+// ── Virtual Timeline (Shield Mode) ──
+
+#define VT_SMOOTH_STEP   0.025f
+#define VT_MAX_DELTA_MS  33.0f
+
+static bool           vt_initialized    = false;
+static os_unfair_lock vt_lock           = OS_UNFAIR_LOCK_INIT;
+static float          vt_speed          = 1.0f;
+static float          vt_target_speed   = 1.0f;
+static uint64_t       vt_base_real      = 0;
+static uint64_t       vt_base_fake      = 0;
+static mach_timebase_info_data_t vt_tb;
+static double         vt_ns_per_tick    = 0.0;
+
+static int      (*orig_shield_clock_gettime)(clockid_t, struct timespec *) = NULL;
+static int      (*orig_shield_gettimeofday)(struct timeval *, void *) = NULL;
+static uint64_t (*orig_shield_mach_absolute_time)(void) = NULL;
+static uint64_t (*orig_shield_mach_continuous_time)(void) = NULL;
+static double   (*orig_shield_CACurrentMediaTime)(void) = NULL;
+static double   (*orig_shield_CFAbsoluteTimeGetCurrent)(void) = NULL;
+static void     (*orig_shield_exit)(int) = NULL;
+static void     (*orig_shield__exit)(int) = NULL;
+static void     (*orig_shield_abort)(void) = NULL;
+static int      (*orig_shield_kill)(int, int) = NULL;
+static int      (*orig_shield_raise)(int) = NULL;
+
+static void vt_ensure_init(void) {
+  if (vt_initialized) return;
+  mach_timebase_info(&vt_tb);
+  vt_ns_per_tick = (double)vt_tb.numer / (double)vt_tb.denom;
+  uint64_t now = mach_absolute_time();
+  vt_base_real = now;
+  vt_base_fake = now;
+  vt_initialized = true;
+}
+
+static void vt_smooth(float *current, float target) {
+  if (*current < target) {
+    *current += VT_SMOOTH_STEP;
+    if (*current > target) *current = target;
+  } else if (*current > target) {
+    *current -= VT_SMOOTH_STEP;
+    if (*current < target) *current = target;
+  }
+}
+
+static uint64_t vt_now_mach(void) {
+  os_unfair_lock_lock(&vt_lock);
+  vt_ensure_init();
+  vt_smooth(&vt_speed, vt_target_speed);
+  uint64_t now = mach_absolute_time();
+  uint64_t elapsed = now - vt_base_real;
+  double elapsed_ns = (double)elapsed * vt_ns_per_tick;
+  if (elapsed_ns > VT_MAX_DELTA_MS * 1000000.0) {
+    uint64_t rebase_jump = (uint64_t)((double)elapsed * (double)vt_speed);
+    vt_base_fake += rebase_jump;
+    vt_base_real = now;
+    elapsed = 0;
+  }
+  uint64_t fake_delta = (uint64_t)((double)elapsed * (double)vt_speed);
+  uint64_t result = vt_base_fake + fake_delta;
+  os_unfair_lock_unlock(&vt_lock);
+  return result;
+}
+
+// ── Shield unifed time hooks ──
+
+static int my_shield_clock_gettime(clockid_t clk_id, struct timespec *tp) {
+  int ret = orig_shield_clock_gettime(clk_id, tp);
+  if (ret || !tp) return ret;
+  uint64_t fake_mach = vt_now_mach();
+  double fake_ns = (double)fake_mach * vt_ns_per_tick;
+  tp->tv_sec  = (time_t)(fake_ns / 1000000000.0);
+  tp->tv_nsec = (long)fake_ns % 1000000000L;
+  return ret;
+}
+
+static int my_shield_gettimeofday(struct timeval *tv, struct timezone *tz) {
+  int ret = orig_shield_gettimeofday(tv, tz);
+  if (ret || !tv) return ret;
+  uint64_t fake_mach = vt_now_mach();
+  double fake_ns = (double)fake_mach * vt_ns_per_tick;
+  tv->tv_sec  = (time_t)(fake_ns / 1000000000.0);
+  tv->tv_usec = (suseconds_t)((int64_t)fake_ns / 1000 % 1000000);
+  return ret;
+}
+
+static uint64_t my_shield_mach_absolute_time(void) {
+  return vt_now_mach();
+}
+
+static uint64_t my_shield_mach_continuous_time(void) {
+  return vt_now_mach();
+}
+
+static double my_shield_CACurrentMediaTime(void) {
+  uint64_t fake_mach = vt_now_mach();
+  return (double)fake_mach * vt_ns_per_tick / 1000000000.0;
+}
+
+static double my_shield_CFAbsoluteTimeGetCurrent(void) {
+  uint64_t fake_mach = vt_now_mach();
+  return (double)fake_mach * vt_ns_per_tick / 1000000000.0;
+}
+
+// ── Shield exit/abort/kill/raise interception ──
+
+static void my_shield_exit(int status) {
+  os_unfair_lock_lock(&vt_lock);
+  float s = vt_target_speed;
+  os_unfair_lock_unlock(&vt_lock);
+  if (s != 1.0f) return;
+  orig_shield_exit(status);
+}
+
+static void my_shield__exit(int status) {
+  os_unfair_lock_lock(&vt_lock);
+  float s = vt_target_speed;
+  os_unfair_lock_unlock(&vt_lock);
+  if (s != 1.0f) return;
+  orig_shield__exit(status);
+}
+
+static void my_shield_abort(void) {
+  os_unfair_lock_lock(&vt_lock);
+  float s = vt_target_speed;
+  os_unfair_lock_unlock(&vt_lock);
+  if (s != 1.0f) return;
+  orig_shield_abort();
+}
+
+static int my_shield_kill(int pid, int sig) {
+  if (pid == getpid() || pid <= 0) {
+    os_unfair_lock_lock(&vt_lock);
+    float s = vt_target_speed;
+    os_unfair_lock_unlock(&vt_lock);
+    if (s != 1.0f) return 0;
+  }
+  return orig_shield_kill(pid, sig);
+}
+
+static int my_shield_raise(int sig) {
+  os_unfair_lock_lock(&vt_lock);
+  float s = vt_target_speed;
+  os_unfair_lock_unlock(&vt_lock);
+  if (s != 1.0f) return 0;
+  return orig_shield_raise(sig);
+}
+
+// ── Public API ──
+
+int hook_shield(void) {
+  static int hooked = 0;
+  if (hooked) return 0;
+
+  struct rebinding time_bindings[] = {
+    {"clock_gettime",             my_shield_clock_gettime,          (void *)&orig_shield_clock_gettime},
+    {"gettimeofday",              my_shield_gettimeofday,           (void *)&orig_shield_gettimeofday},
+    {"mach_absolute_time",        my_shield_mach_absolute_time,     (void *)&orig_shield_mach_absolute_time},
+    {"mach_continuous_time",      my_shield_mach_continuous_time,   (void *)&orig_shield_mach_continuous_time},
+    {"CACurrentMediaTime",        my_shield_CACurrentMediaTime,     (void *)&orig_shield_CACurrentMediaTime},
+    {"CFAbsoluteTimeGetCurrent",  my_shield_CFAbsoluteTimeGetCurrent, (void *)&orig_shield_CFAbsoluteTimeGetCurrent},
+  };
+  int r = rebind_symbols(time_bindings, 6);
+  if (r != 0) return r;
+
+  struct rebinding exit_bindings[] = {
+    {"exit",     my_shield_exit,   (void *)&orig_shield_exit},
+    {"_exit",    my_shield__exit,  (void *)&orig_shield__exit},
+    {"abort",    my_shield_abort,  (void *)&orig_shield_abort},
+    {"kill",     my_shield_kill,   (void *)&orig_shield_kill},
+    {"raise",    my_shield_raise,  (void *)&orig_shield_raise},
+  };
+  r = rebind_symbols(exit_bindings, 5);
+  if (r != 0) return r;
+
+  orig_shield_CACurrentMediaTime = dlsym(RTLD_DEFAULT, "CACurrentMediaTime");
+  orig_shield_CFAbsoluteTimeGetCurrent = dlsym(RTLD_DEFAULT, "CFAbsoluteTimeGetCurrent");
+
+  hooked = 1;
+  return 0;
+}
+
+void set_shield(float value) {
+  os_unfair_lock_lock(&vt_lock);
+  vt_target_speed = value;
+  os_unfair_lock_unlock(&vt_lock);
+}
+
+float get_shield_speed(void) {
+  os_unfair_lock_lock(&vt_lock);
+  float v = vt_target_speed;
+  os_unfair_lock_unlock(&vt_lock);
+  return v;
+}
+
+void reset_shield(void) {
+  set_shield(1.0f);
 }

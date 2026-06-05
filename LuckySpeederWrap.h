@@ -35,7 +35,8 @@ enum SpeedMode {
   Spade = 1,
   Club = 2,
   Diamond = 3,
-  Star = 4
+  Star = 4,
+  Shield = 5
 };
 enum SpeedMode currentMod = Heart;
 
@@ -44,7 +45,8 @@ const char *modeSymbols[] = {
   "suit.spade.fill",
   "suit.club.fill",
   "suit.diamond.fill",
-  "star.fill"
+  "star.fill",
+  "shield.fill"
 };
 const int modeSymbolsCount = sizeof(modeSymbols) / sizeof(char *);
 
@@ -73,6 +75,8 @@ int initHook(void) {
     return hook_mach_absolute_time();
   case Star:
     return hook_SKScene_update();
+  case Shield:
+    return hook_shield();
   }
 }
 
@@ -112,6 +116,9 @@ void updateSpeed(float value) {
     return;
   case Star:
     set_SKScene_update(value);
+    return;
+  case Shield:
+    set_shield(value);
     return;
   }
 }

@@ -62,4 +62,12 @@ void reset_SKScene_update(void);
 
 int hook_anti_popup(void);
 
+int hook_shield(void);
+
+void set_shield(float value);
+
+float get_shield_speed(void);
+
+void reset_shield(void);
+
 #endif // LuckySpeeder_H

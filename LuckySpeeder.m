@@ -66,6 +66,11 @@ void reset_SKScene_update(void) { set_SKScene_update(1.0); }
 static BOOL anti_popup_hooked = NO;
 static void (*orig_alertView_show)(id, SEL) = NULL;
 static IMP orig_presentVC = NULL;
+// NSDate hook
+static IMP orig_NSDate_timeIntervalSinceReferenceDate = NULL;
+// MyAlertMsg hook
+static IMP orig_MyAlertMsg = NULL;
+static Class MyAlertMsgClass = NULL;
 
 static BOOL isAntiCheatAlert(NSString *title, NSString *message) {
   if (!title && !message) return NO;
@@ -100,6 +105,7 @@ static void my_alertView_show(id self, SEL cmd) {
 }
 
 static void my_presentViewController(id self, SEL cmd, id vc, BOOL animated, id completion) {
+  // Block anti-cheat alert dialogs
   if ([vc isKindOfClass:[UIAlertController class]]) {
     NSString *title = [vc title];
     NSString *msg  = [vc message];
@@ -108,6 +114,11 @@ static void my_presentViewController(id self, SEL cmd, id vc, BOOL animated, id 
         return;
       }
     }
+  }
+  // Block SGSSanctionViewController (Stove sanction/ban screen)
+  if ([NSStringFromClass([vc class]) containsString:@"SGSSanctionViewController"] ||
+      [NSStringFromClass([vc class]) containsString:@"SanctionViewController"]) {
+    return;
   }
   ((void (*)(id, SEL, id, BOOL, id))orig_presentVC)(self, cmd, vc, animated, completion);
 }
@@ -126,12 +137,45 @@ int hook_anti_popup(void) {
     }
   }
 
-  // Hook UIViewController presentViewController (modern API)
+  // Hook UIViewController presentViewController
   Method m = class_getInstanceMethod([UIViewController class],
                                       @selector(presentViewController:animated:completion:));
   if (m) {
     orig_presentVC = method_getImplementation(m);
     method_setImplementation(m, (IMP)my_presentViewController);
+  }
+
+  // NSDate timeIntervalSinceReferenceDate swizzle (Shield unified time)
+  orig_date_timeIntervalSinceReferenceDate = (void *)class_getMethodImplementation(
+      objc_getMetaClass("NSDate"),
+      @selector(timeIntervalSinceReferenceDate));
+  if (orig_date_timeIntervalSinceReferenceDate) {
+    Method nm = class_getClassMethod([NSDate class],
+                                      @selector(timeIntervalSinceReferenceDate));
+    if (nm) {
+      method_setImplementation(nm, (IMP)my_NSDate_timeIntervalSinceReferenceDate);
+    }
+  }
+
+  // MyAlertMsg:a_nCode:a_bAppExit: dynamic class scan & hook
+  int numClasses = objc_getClassList(NULL, 0);
+  if (numClasses > 0) {
+    int count = numClasses;
+    Class *buffer = (Class *)malloc(sizeof(Class) * count);
+    objc_getClassList(buffer, (unsigned)count);
+    SEL alertSel = @selector(MyAlertMsg:a_nCode:a_bAppExit:);
+    for (int i = 0; i < count; i++) {
+      Class cls = buffer[i];
+      if (!cls) continue;
+      Method mm = class_getInstanceMethod(cls, alertSel);
+      if (mm) {
+        orig_MyAlertMsg = method_getImplementation(mm);
+        MyAlertMsgClass = cls;
+        method_setImplementation(mm, (IMP)my_MyAlertMsg);
+        break;
+      }
+    }
+    free(buffer);
   }
 
   return 0;
