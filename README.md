@@ -84,6 +84,7 @@ clang -shared \
     mach_excServer.c hwbphook.c port_clock_gettime.c fishhook.c LuckySpeeder.c CADisplayLinkSpeeder.m LuckySpeeder.m LuckySpeederView.m Main.m \
     -framework Foundation \
     -framework UIKit \
+    -framework QuartzCore \
     -framework SpriteKit \
     -o LuckySpeeder.dylib
 ```
