@@ -34,12 +34,12 @@ SOFTWARE.
 #include <string.h>
 #include <sys/time.h>
 #include <unistd.h>
-#include <pthread.h>
-#include <stdlib.h>
 
 #if !TARGET_OS_TV
 #include "hwbphook.h"
 #include "port_clock_gettime.h"
+#include <mach/mach.h>
+#include <mach/thread_act.h>
 #endif
 
 static float timeScale_speed = 1.0;
@@ -243,19 +243,6 @@ static int my_clock_gettime(clockid_t clk_id, struct timespec *tp) {
       int64_t true_curSec = tp->tv_sec * NSec_Scale + tp->tv_nsec;
       int64_t true_preSec = clock_gettime_true_pre_sec * NSec_Scale + clock_gettime_true_pre_nsec;
       int64_t invl = true_curSec - true_preSec;
-
-      // HWBP may have been cleared by stealth thread → some calls went to
-      // original clock_gettime and our accumulated state is stale.
-      // Reset without scaling to avoid massive time jumps / freeze.
-      if (invl > 200000000LL) { // >200ms gap → HWBP was likely cleared
-        clock_gettime_pre_sec = tp->tv_sec;
-        clock_gettime_pre_nsec = tp->tv_nsec;
-        clock_gettime_true_pre_sec = tp->tv_sec;
-        clock_gettime_true_pre_nsec = tp->tv_nsec;
-        os_unfair_lock_unlock(&clock_gettime_lock);
-        return ret;
-      }
-
       invl *= clock_gettime_speed;
 
       int64_t curSec = clock_gettime_pre_sec * NSec_Scale + clock_gettime_pre_nsec;
@@ -276,30 +263,6 @@ static int my_clock_gettime(clockid_t clk_id, struct timespec *tp) {
   return ret;
 }
 
-#if !TARGET_OS_TV
-// Club mode anti-detection: stored pointers for HWBP toggle
-static void *g_clock_orig[1] = { NULL };
-static void *g_clock_hook[1] = { NULL };
-static volatile bool g_clock_stealth_on = false;
-
-static void *clock_stealth_thread(void *arg) {
-  while (g_clock_stealth_on) {
-    // Keep breakpoints active for 500-1500ms (jittered)
-    usleep(500000 + (arc4random_uniform(1000) * 1000));
-    if (!g_clock_stealth_on) break;
-
-    // Clear breakpoints → anti-cheat sees a clean state
-    hwbp_unhook(g_clock_orig, 1);
-    usleep(2000 + arc4random_uniform(3000)); // 2-5ms clean window
-    if (!g_clock_stealth_on) break;
-
-    // Re-set breakpoints
-    hwbp_hook(g_clock_orig, g_clock_hook, 1);
-  }
-  return NULL;
-}
-#endif
-
 #if TARGET_OS_TV
 int hook_clock_gettime(void) {
   if (original_clock_gettime) return 0;
@@ -314,17 +277,66 @@ int hook_clock_gettime(void) {
   original_clock_gettime = dlsym(RTLD_DEFAULT, "clock_gettime");
   if (!original_clock_gettime) return -1;
 
-  g_clock_orig[0] = (void *)original_clock_gettime;
-  g_clock_hook[0] = (void *)my_clock_gettime;
-  bool success = hwbp_hook(g_clock_orig, g_clock_hook, 1);
+  void *original[] = { (void *)original_clock_gettime };
+  void *hooked[] = { (void *)my_clock_gettime };
+  bool success = hwbp_hook(original, hooked, 1);
+
   if (!success) return -1;
 
-  // Start anti-detection stealth thread
-  g_clock_stealth_on = true;
-  pthread_t tid;
-  pthread_create(&tid, NULL, clock_stealth_thread, NULL);
-  pthread_detach(tid);
+  // Mask HWBP traces from anti-cheat scanners
+  hook_anti_detect();
 
+  return 0;
+}
+#endif
+
+#if !TARGET_OS_TV
+// ── Anti-detection: hide HWBP & breakpoint exception port ──
+
+static kern_return_t (*orig_thread_get_state)(thread_t, thread_state_flavor_t,
+                                              thread_state_t, mach_msg_type_number_t *) = NULL;
+
+static kern_return_t my_thread_get_state(thread_t target, thread_state_flavor_t flavor,
+                                         thread_state_t state, mach_msg_type_number_t *count) {
+  kern_return_t ret = orig_thread_get_state(target, flavor, state, count);
+  // Someone reading ARM_DEBUG_STATE64 will see clean registers
+  if (ret == KERN_SUCCESS && flavor == ARM_DEBUG_STATE64) {
+    arm_debug_state64_t *dbg = (arm_debug_state64_t *)state;
+    for (int i = 0; i < 16; i++) {
+      dbg->__bvr[i] = 0;
+      dbg->__bcr[i] = 0;
+    }
+  }
+  return ret;
+}
+
+static kern_return_t (*orig_task_get_exception_ports)(task_t, exception_mask_t,
+    exception_mask_t *, mach_msg_type_number_t *,
+    exception_handler_t *, exception_behavior_t *, thread_state_flavor_t *) = NULL;
+
+static kern_return_t my_task_get_exception_ports(task_t task, exception_mask_t mask,
+    exception_mask_t *masks, mach_msg_type_number_t *count,
+    exception_handler_t *handlers, exception_behavior_t *behaviors, thread_state_flavor_t *flavors) {
+  kern_return_t ret = orig_task_get_exception_ports(task, mask, masks, count, handlers, behaviors, flavors);
+  if (ret == KERN_SUCCESS) {
+    for (mach_msg_type_number_t i = 0; i < *count; i++) {
+      if (masks[i] & EXC_MASK_BREAKPOINT) {
+        masks[i] &= ~EXC_MASK_BREAKPOINT;
+      }
+    }
+  }
+  return ret;
+}
+
+static int hook_anti_detect(void) {
+  struct rebinding r1[] = {
+    { "thread_get_state", my_thread_get_state, (void *)&orig_thread_get_state },
+  };
+  struct rebinding r2[] = {
+    { "task_get_exception_ports", my_task_get_exception_ports, (void *)&orig_task_get_exception_ports },
+  };
+  rebind_symbols(r1, 1);
+  rebind_symbols(r2, 1);
   return 0;
 }
 #endif
@@ -339,11 +351,10 @@ void set_clock_gettime(float value) {
 void reset_clock_gettime(void) { set_clock_gettime(1.0); }
 #else
 void reset_clock_gettime(void) {
-  g_clock_stealth_on = false;
-  usleep(10000); // Wait for stealth thread to exit
   if (!original_clock_gettime) return;
 
-  hwbp_unhook(g_clock_orig, 1);
+  void *original[] = { (void *)original_clock_gettime };
+  hwbp_unhook(original, 1);
   set_clock_gettime(1.0);
   original_clock_gettime = NULL;
 }
