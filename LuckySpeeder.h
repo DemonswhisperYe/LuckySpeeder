@@ -60,10 +60,4 @@ void set_SKScene_update(float value);
 
 void reset_SKScene_update(void);
 
-int hook_CADisplayLink(void);
-
-void set_CADisplayLink(float value);
-
-void reset_CADisplayLink(void);
-
 #endif // LuckySpeeder_H
