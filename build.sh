@@ -26,10 +26,9 @@ for target in "$@"; do
             -flto \
             -fvisibility=hidden \
             -Wl,-x \
-            mach_excServer.c hwbphook.c port_clock_gettime.c fishhook.c LuckySpeeder.c CADisplayLinkSpeeder.m LuckySpeeder.m LuckySpeederView.m Main.m \
+            mach_excServer.c hwbphook.c port_clock_gettime.c fishhook.c LuckySpeeder.c LuckySpeeder.m LuckySpeederView.m Main.m \
             -framework Foundation \
             -framework UIKit \
-            -framework QuartzCore \
             -framework SpriteKit \
             -o $out_dir/LuckySpeeder.dylib
         ;;
@@ -49,10 +48,9 @@ for target in "$@"; do
             -flto \
             -fvisibility=hidden \
             -Wl,-x \
-            mach_excServer.c hwbphook.c port_clock_gettime.c fishhook.c LuckySpeeder.c CADisplayLinkSpeeder.m LuckySpeeder.m LuckySpeederView.m Main.m \
+            mach_excServer.c hwbphook.c port_clock_gettime.c fishhook.c LuckySpeeder.c LuckySpeeder.m LuckySpeederView.m Main.m \
             -framework Foundation \
             -framework UIKit \
-            -framework QuartzCore \
             -framework SpriteKit \
             -o $out_dir/LuckySpeeder.dylib
         ;;
@@ -71,10 +69,9 @@ for target in "$@"; do
             -flto \
             -fvisibility=hidden \
             -Wl,-x \
-            mach_excServer.c hwbphook.c port_clock_gettime.c fishhook.c LuckySpeeder.c CADisplayLinkSpeeder.m LuckySpeeder.m LuckySpeederView.m Main.m \
+            mach_excServer.c hwbphook.c port_clock_gettime.c fishhook.c LuckySpeeder.c LuckySpeeder.m LuckySpeederView.m Main.m \
             -framework Foundation \
             -framework UIKit \
-            -framework QuartzCore \
             -framework SpriteKit \
             -o $out_dir/LuckySpeeder.dylib
         ;;
@@ -93,10 +90,9 @@ for target in "$@"; do
             -flto \
             -fvisibility=hidden \
             -Wl,-x \
-            fishhook.c LuckySpeeder.c CADisplayLinkSpeeder.m LuckySpeeder.m LuckySpeederView.m Main.m \
+            fishhook.c LuckySpeeder.c LuckySpeeder.m LuckySpeederView.m Main.m \
             -framework Foundation \
             -framework UIKit \
-            -framework QuartzCore \
             -framework SpriteKit \
             -o $out_dir/LuckySpeeder.dylib
         ;;
