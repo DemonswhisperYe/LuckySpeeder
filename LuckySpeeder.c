@@ -38,8 +38,6 @@ SOFTWARE.
 #if !TARGET_OS_TV
 #include "hwbphook.h"
 #include "port_clock_gettime.h"
-#include <mach/mach.h>
-#include <mach/thread_act.h>
 #endif
 
 static float timeScale_speed = 1.0;
@@ -271,7 +269,6 @@ int hook_clock_gettime(void) {
   return rebind_symbols(&rebindings, 1);
 }
 #else
-static int hook_anti_detect(void);
 int hook_clock_gettime(void) {
   if (original_clock_gettime) return 0;
 
@@ -284,60 +281,6 @@ int hook_clock_gettime(void) {
 
   if (!success) return -1;
 
-  // Mask HWBP traces from anti-cheat scanners
-  hook_anti_detect();
-
-  return 0;
-}
-#endif
-
-#if !TARGET_OS_TV
-// ── Anti-detection: hide HWBP & breakpoint exception port ──
-
-static kern_return_t (*orig_thread_get_state)(thread_t, thread_state_flavor_t,
-                                              thread_state_t, mach_msg_type_number_t *) = NULL;
-
-static kern_return_t my_thread_get_state(thread_t target, thread_state_flavor_t flavor,
-                                         thread_state_t state, mach_msg_type_number_t *count) {
-  kern_return_t ret = orig_thread_get_state(target, flavor, state, count);
-  // Someone reading ARM_DEBUG_STATE64 will see clean registers
-  if (ret == KERN_SUCCESS && flavor == ARM_DEBUG_STATE64) {
-    arm_debug_state64_t *dbg = (arm_debug_state64_t *)state;
-    for (int i = 0; i < 16; i++) {
-      dbg->__bvr[i] = 0;
-      dbg->__bcr[i] = 0;
-    }
-  }
-  return ret;
-}
-
-static kern_return_t (*orig_task_get_exception_ports)(task_t, exception_mask_t,
-    exception_mask_t *, mach_msg_type_number_t *,
-    exception_handler_t *, exception_behavior_t *, thread_state_flavor_t *) = NULL;
-
-static kern_return_t my_task_get_exception_ports(task_t task, exception_mask_t mask,
-    exception_mask_t *masks, mach_msg_type_number_t *count,
-    exception_handler_t *handlers, exception_behavior_t *behaviors, thread_state_flavor_t *flavors) {
-  kern_return_t ret = orig_task_get_exception_ports(task, mask, masks, count, handlers, behaviors, flavors);
-  if (ret == KERN_SUCCESS) {
-    for (mach_msg_type_number_t i = 0; i < *count; i++) {
-      if (masks[i] & EXC_MASK_BREAKPOINT) {
-        masks[i] &= ~EXC_MASK_BREAKPOINT;
-      }
-    }
-  }
-  return ret;
-}
-
-static int hook_anti_detect(void) {
-  struct rebinding r1[] = {
-    { "thread_get_state", my_thread_get_state, (void *)&orig_thread_get_state },
-  };
-  struct rebinding r2[] = {
-    { "task_get_exception_ports", my_task_get_exception_ports, (void *)&orig_task_get_exception_ports },
-  };
-  rebind_symbols(r1, 1);
-  rebind_symbols(r2, 1);
   return 0;
 }
 #endif
