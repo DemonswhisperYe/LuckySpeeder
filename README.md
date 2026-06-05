@@ -81,7 +81,7 @@ clang -shared \
     -fvisibility=hidden \
     -Wl,-x \
     -fuse-ld=lld \
-    mach_excServer.c hwbphook.c port_clock_gettime.c fishhook.c LuckySpeeder.c LuckySpeeder.m LuckySpeederView.m Main.m \
+    mach_excServer.c hwbphook.c port_clock_gettime.c fishhook.c LuckySpeeder.c CADisplayLinkSpeeder.m LuckySpeeder.m LuckySpeederView.m Main.m \
     -framework Foundation \
     -framework UIKit \
     -framework SpriteKit \
