@@ -271,6 +271,7 @@ int hook_clock_gettime(void) {
   return rebind_symbols(&rebindings, 1);
 }
 #else
+static int hook_anti_detect(void);
 int hook_clock_gettime(void) {
   if (original_clock_gettime) return 0;
 
