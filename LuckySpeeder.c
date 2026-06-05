@@ -261,29 +261,12 @@ static int my_clock_gettime(clockid_t clk_id, struct timespec *tp) {
   return ret;
 }
 
-#if TARGET_OS_TV
 int hook_clock_gettime(void) {
   if (original_clock_gettime) return 0;
 
   struct rebinding rebindings = { "clock_gettime", my_clock_gettime, (void *)&original_clock_gettime };
   return rebind_symbols(&rebindings, 1);
 }
-#else
-int hook_clock_gettime(void) {
-  if (original_clock_gettime) return 0;
-
-  original_clock_gettime = dlsym(RTLD_DEFAULT, "clock_gettime");
-  if (!original_clock_gettime) return -1;
-
-  void *original[] = { (void *)original_clock_gettime };
-  void *hooked[] = { (void *)my_clock_gettime };
-  bool success = hwbp_hook(original, hooked, 1);
-
-  if (!success) return -1;
-
-  return 0;
-}
-#endif
 
 void set_clock_gettime(float value) {
   os_unfair_lock_lock(&clock_gettime_lock);
@@ -291,18 +274,7 @@ void set_clock_gettime(float value) {
   os_unfair_lock_unlock(&clock_gettime_lock);
 }
 
-#if TARGET_OS_TV
 void reset_clock_gettime(void) { set_clock_gettime(1.0); }
-#else
-void reset_clock_gettime(void) {
-  if (!original_clock_gettime) return;
-
-  void *original[] = { (void *)original_clock_gettime };
-  hwbp_unhook(original, 1);
-  set_clock_gettime(1.0);
-  original_clock_gettime = NULL;
-}
-#endif
 
 static float mach_absolute_time_speed = 1.0;
 
