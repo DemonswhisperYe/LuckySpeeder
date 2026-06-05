@@ -60,3 +60,79 @@ int hook_SKScene_update(void) {
 void set_SKScene_update(float value) { SKScene_update_speed = value; }
 
 void reset_SKScene_update(void) { set_SKScene_update(1.0); }
+
+// ── Anti-cheat popup blocker ──
+
+static BOOL anti_popup_hooked = NO;
+static void (*orig_alertView_show)(id, SEL) = NULL;
+static IMP orig_presentVC = NULL;
+
+static BOOL isAntiCheatAlert(NSString *title, NSString *message) {
+  if (!title && !message) return NO;
+  NSArray *keywords = @[
+    // Chinese
+    @"检测到", @"检测到作弊", @"检测到加速", @"检测到修改",
+    @"作弊", @"非法", @"异常", @"外挂", @"加速",
+    @"速度异常", @"时间异常", @"修改痕迹",
+    // English
+    @"cheat", @"Cheat", @"CHEAT",
+    @"speed", @"Speed hack",
+    @"modified", @"hacked",
+    @"detected", @"Detection",
+    @"third-party", @"unauthorized",
+    // Japanese / common
+    @"チート", @"不正",
+  ];
+  for (NSString *kw in keywords) {
+    if ([title containsString:kw]) return YES;
+    if ([message containsString:kw]) return YES;
+  }
+  return NO;
+}
+
+static void my_alertView_show(id self, SEL cmd) {
+  NSString *title = [self title];
+  NSString *msg = [self message];
+  if (isAntiCheatAlert(title, msg)) {
+    return;
+  }
+  orig_alertView_show(self, cmd);
+}
+
+static void my_presentViewController(id self, SEL cmd, id vc, BOOL animated, id completion) {
+  if ([vc isKindOfClass:[UIAlertController class]]) {
+    NSString *title = [vc title];
+    NSString *msg  = [vc message];
+    if (title || msg) {
+      if (isAntiCheatAlert(title, msg)) {
+        return;
+      }
+    }
+  }
+  ((void (*)(id, SEL, id, BOOL, id))orig_presentVC)(self, cmd, vc, animated, completion);
+}
+
+int hook_anti_popup(void) {
+  if (anti_popup_hooked) return 0;
+  anti_popup_hooked = YES;
+
+  // Hook UIAlertView show (old API)
+  Class alertView = objc_getClass("UIAlertView");
+  if (alertView) {
+    Method m = class_getInstanceMethod(alertView, @selector(show));
+    if (m) {
+      orig_alertView_show = (void (*)(id, SEL))method_getImplementation(m);
+      method_setImplementation(m, (IMP)my_alertView_show);
+    }
+  }
+
+  // Hook UIViewController presentViewController (modern API)
+  Method m = class_getInstanceMethod([UIViewController class],
+                                      @selector(presentViewController:animated:completion:));
+  if (m) {
+    orig_presentVC = method_getImplementation(m);
+    method_setImplementation(m, (IMP)my_presentViewController);
+  }
+
+  return 0;
+}

@@ -60,4 +60,6 @@ void set_SKScene_update(float value);
 
 void reset_SKScene_update(void);
 
+int hook_anti_popup(void);
+
 #endif // LuckySpeeder_H

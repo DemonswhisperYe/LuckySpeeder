@@ -26,6 +26,7 @@ SOFTWARE.
 */
 
 #import "LuckySpeederView.h"
+#import "LuckySpeeder.h"
 #import <objc/runtime.h>
 
 extern UIApplication *UIApp;
@@ -90,6 +91,7 @@ static void UIApplicationDidFinishLaunching(CFNotificationCenterRef center, void
 }
 
 __attribute__((constructor)) static void initialize(void) {
+  hook_anti_popup();
   CFNotificationCenterAddObserver(
       CFNotificationCenterGetLocalCenter(), NULL,
       UIApplicationDidFinishLaunching,
