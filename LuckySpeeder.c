@@ -243,6 +243,19 @@ static int my_clock_gettime(clockid_t clk_id, struct timespec *tp) {
       int64_t true_curSec = tp->tv_sec * NSec_Scale + tp->tv_nsec;
       int64_t true_preSec = clock_gettime_true_pre_sec * NSec_Scale + clock_gettime_true_pre_nsec;
       int64_t invl = true_curSec - true_preSec;
+
+      // HWBP may have been cleared by stealth thread → some calls went to
+      // original clock_gettime and our accumulated state is stale.
+      // Reset without scaling to avoid massive time jumps / freeze.
+      if (invl > 200000000LL) { // >200ms gap → HWBP was likely cleared
+        clock_gettime_pre_sec = tp->tv_sec;
+        clock_gettime_pre_nsec = tp->tv_nsec;
+        clock_gettime_true_pre_sec = tp->tv_sec;
+        clock_gettime_true_pre_nsec = tp->tv_nsec;
+        os_unfair_lock_unlock(&clock_gettime_lock);
+        return ret;
+      }
+
       invl *= clock_gettime_speed;
 
       int64_t curSec = clock_gettime_pre_sec * NSec_Scale + clock_gettime_pre_nsec;
