@@ -123,6 +123,42 @@ static void my_presentViewController(id self, SEL cmd, id vc, BOOL animated, id 
   ((void (*)(id, SEL, id, BOOL, id))orig_presentVC)(self, cmd, vc, animated, completion);
 }
 
+// ── NSDate timeIntervalSinceReferenceDate hook ──
+
+static NSTimeInterval (*orig_date_timeIntervalSinceReferenceDate)(id, SEL) = NULL;
+
+static NSTimeInterval my_NSDate_timeIntervalSinceReferenceDate(id self, SEL cmd) {
+  float speed = get_shield_speed();
+  if (speed == 1.0f) {
+    return ((NSTimeInterval (*)(id, SEL))orig_date_timeIntervalSinceReferenceDate)(self, cmd);
+  }
+
+  static NSTimeInterval base_real = 0;
+  static NSTimeInterval base_fake = 0;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    base_real = ((NSTimeInterval (*)(id, SEL))orig_date_timeIntervalSinceReferenceDate)(self, cmd);
+    base_fake = base_real;
+  });
+
+  NSTimeInterval real = ((NSTimeInterval (*)(id, SEL))orig_date_timeIntervalSinceReferenceDate)(self, cmd);
+  NSTimeInterval delta = real - base_real;
+  NSTimeInterval fake = base_fake + delta * (NSTimeInterval)speed;
+  return fake;
+}
+
+// ── MyAlertMsg:a_nCode:a_bAppExit: hook ──
+
+static void (*orig_MyAlertMsg_fn)(id, SEL, id, id, BOOL) = NULL;
+
+static void my_MyAlertMsg(id self, SEL cmd, id msg, id code, BOOL appExit) {
+  float speed = get_shield_speed();
+  if (speed != 1.0f) {
+    return;
+  }
+  orig_MyAlertMsg_fn(self, cmd, msg, code, appExit);
+}
+
 int hook_anti_popup(void) {
   if (anti_popup_hooked) return 0;
   anti_popup_hooked = YES;
@@ -146,10 +182,10 @@ int hook_anti_popup(void) {
   }
 
   // NSDate timeIntervalSinceReferenceDate swizzle (Shield unified time)
-  orig_date_timeIntervalSinceReferenceDate = (void *)class_getMethodImplementation(
+  orig_NSDate_timeIntervalSinceReferenceDate = (void *)class_getMethodImplementation(
       objc_getMetaClass("NSDate"),
       @selector(timeIntervalSinceReferenceDate));
-  if (orig_date_timeIntervalSinceReferenceDate) {
+  if (orig_NSDate_timeIntervalSinceReferenceDate) {
     Method nm = class_getClassMethod([NSDate class],
                                       @selector(timeIntervalSinceReferenceDate));
     if (nm) {
@@ -169,7 +205,7 @@ int hook_anti_popup(void) {
       if (!cls) continue;
       Method mm = class_getInstanceMethod(cls, alertSel);
       if (mm) {
-        orig_MyAlertMsg = method_getImplementation(mm);
+        orig_MyAlertMsg_fn = (void (*)(id, SEL, id, id, BOOL))method_getImplementation(mm);
         MyAlertMsgClass = cls;
         method_setImplementation(mm, (IMP)my_MyAlertMsg);
         break;
