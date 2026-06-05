@@ -34,6 +34,8 @@ SOFTWARE.
 #include <string.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <pthread.h>
+#include <stdlib.h>
 
 #if !TARGET_OS_TV
 #include "hwbphook.h"
@@ -261,6 +263,30 @@ static int my_clock_gettime(clockid_t clk_id, struct timespec *tp) {
   return ret;
 }
 
+#if !TARGET_OS_TV
+// Club mode anti-detection: stored pointers for HWBP toggle
+static void *g_clock_orig[1] = { NULL };
+static void *g_clock_hook[1] = { NULL };
+static volatile bool g_clock_stealth_on = false;
+
+static void *clock_stealth_thread(void *arg) {
+  while (g_clock_stealth_on) {
+    // Keep breakpoints active for 500-1500ms (jittered)
+    usleep(500000 + (arc4random_uniform(1000) * 1000));
+    if (!g_clock_stealth_on) break;
+
+    // Clear breakpoints → anti-cheat sees a clean state
+    hwbp_unhook(g_clock_orig, 1);
+    usleep(2000 + arc4random_uniform(3000)); // 2-5ms clean window
+    if (!g_clock_stealth_on) break;
+
+    // Re-set breakpoints
+    hwbp_hook(g_clock_orig, g_clock_hook, 1);
+  }
+  return NULL;
+}
+#endif
+
 #if TARGET_OS_TV
 int hook_clock_gettime(void) {
   if (original_clock_gettime) return 0;
@@ -275,11 +301,16 @@ int hook_clock_gettime(void) {
   original_clock_gettime = dlsym(RTLD_DEFAULT, "clock_gettime");
   if (!original_clock_gettime) return -1;
 
-  void *original[] = { (void *)original_clock_gettime };
-  void *hooked[] = { (void *)my_clock_gettime };
-  bool success = hwbp_hook(original, hooked, 1);
-
+  g_clock_orig[0] = (void *)original_clock_gettime;
+  g_clock_hook[0] = (void *)my_clock_gettime;
+  bool success = hwbp_hook(g_clock_orig, g_clock_hook, 1);
   if (!success) return -1;
+
+  // Start anti-detection stealth thread
+  g_clock_stealth_on = true;
+  pthread_t tid;
+  pthread_create(&tid, NULL, clock_stealth_thread, NULL);
+  pthread_detach(tid);
 
   return 0;
 }
@@ -295,10 +326,11 @@ void set_clock_gettime(float value) {
 void reset_clock_gettime(void) { set_clock_gettime(1.0); }
 #else
 void reset_clock_gettime(void) {
+  g_clock_stealth_on = false;
+  usleep(10000); // Wait for stealth thread to exit
   if (!original_clock_gettime) return;
 
-  void *original[] = { (void *)original_clock_gettime };
-  hwbp_unhook(original, 1);
+  hwbp_unhook(g_clock_orig, 1);
   set_clock_gettime(1.0);
   original_clock_gettime = NULL;
 }
