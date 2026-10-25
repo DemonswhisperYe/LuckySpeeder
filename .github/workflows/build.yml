@@ -34,10 +34,19 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          merge-multiple: true
           path: dist
+
+      - name: Flatten artifacts
+        run: |
+          set -euo pipefail
+          cd dist
+          for d in */; do
+            target="${d%/}"
+            cp "$d/LuckySpeeder.dylib" "LuckySpeeder-$target.dylib"
+          done
+          ls -l
 
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/LuckySpeeder.dylib
+          files: dist/LuckySpeeder-*.dylib

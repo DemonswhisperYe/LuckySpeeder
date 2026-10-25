@@ -1,0 +1,4 @@
+72e9eae74c656e2e39757e6ac5aebb3fd724ad66db665c517c94c89a94990ff4  LuckySpeeder-arm64-apple-ios.dylib
+b1a88233f03809580d8e16552bac0cfa199f102fbc132ec838c449faf70d4806  LuckySpeeder-arm64-apple-ios-macabi.dylib
+47be5f75402dc11bf3de987d8b5d55afa475f07f4ff7ea4673451391e343ff63  LuckySpeeder-arm64-apple-tvos.dylib
+1455c0a17db44143afbd1b399b12eb0468036914813d3521e6a389abd0928eb6  LuckySpeeder-arm64-apple-xros.dylib
