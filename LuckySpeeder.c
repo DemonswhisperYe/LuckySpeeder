@@ -112,6 +112,7 @@ int hook_clock_gettime(void) {
   }
 #endif
 
+#if !TARGET_OS_TV
   // capture originals before hwbp redirect
   sys_clock_gettime = dlsym(RTLD_DEFAULT, "clock_gettime");
   sys_gettimeofday = dlsym(RTLD_DEFAULT, "gettimeofday");
@@ -133,6 +134,7 @@ int hook_clock_gettime(void) {
   };
   if (!hwbp_hook(originals, hooked, 3)) return -1;
   hooks_installed = 1;
+#endif // !TARGET_OS_TV
   return 0;
 }
 
@@ -143,12 +145,14 @@ void set_clock_gettime(float value) {
 void reset_clock_gettime(void) {
   if (!hooks_installed) return;
 
+#if !TARGET_OS_TV
   void *originals[3] = {
     (void *)sys_clock_gettime,
     (void *)sys_gettimeofday,
     (void *)sys_mach_absolute_time,
   };
   hwbp_unhook(originals, 3);
+#endif // !TARGET_OS_TV
   clock_core_reset();
   hooks_installed = 0;
 }
