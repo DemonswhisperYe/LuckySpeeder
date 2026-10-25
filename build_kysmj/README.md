@@ -1,12 +1,19 @@
-# LuckySpeeder build — branch kysmj, tag v0.1.0-kysmj
+# LuckySpeeder build — branch kysmj, tag v0.1.2-kysmj
 
-下载自 https://github.com/DemonswhisperYe/LuckySpeeder/releases/tag/v0.1.0-kysmj
-（GitHub Actions macos-14，Xcode clang，-O3 -flto -fvisibility=hidden）
+GitHub Actions run 40186201878（success），四目标产物下载自 workflow artifacts。
+Release 页面：https://github.com/DemonswhisperYe/LuckySpeeder/releases/tag/v0.1.2-kysmj
 
-用途：注入 Chaos Zero Nightmare（SSR.app）。iPhone 用 `LuckySpeeder-arm64-apple-ios.dylib`
-配 TrollFools 注入即可，其余三个目标是 macabi / xros / tvOS 变体。
+注入 Chaos Zero Nightmare（SSR.app）：iPhone 用 `LuckySpeeder-arm64-apple-ios.dylib`，
+TrollFools 注入。
 
-本次改动：梅花模式（Club）改为统一虚拟时钟，同时 hook
-clock_gettime + gettimeofday + mach_absolute_time（3 个硬件断点），
-两条虚拟时间线（mono / rt）独立锚定，修掉共享累加器把墙钟推到几百年后
-的问题，并补上 CLOCK_BOOTTIME(6) 的支持。
+## v0.1.2 修复内容
+
+修复「点加速就卡死」（崩溃日志 1806）：hook 内部曾调用被断点的原函数
+（`real_ticks` 调 `sys_mach_absolute_time`），断点二次触发递归进 hook，
+同线程重入 `os_unfair_lock` → libplatform abort(259) → 主线程卡死 →
+watchdog 0x8BADF00D 杀进程。
+
+真实时钟源改为断点集合之外的符号：
+- 单调钟：`mach_continuous_time`（独立符号、同一时基、commpage 直读）
+- 墙钟：hook 生效前用裸 `syscall(SYS_clock_gettime, CLOCK_REALTIME)` 锚定一次，
+  之后 = 锚点 + 连续钟换算，任何用户态 hook 都影响不了它
