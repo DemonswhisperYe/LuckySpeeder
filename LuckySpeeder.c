@@ -74,9 +74,18 @@ static int bind_real_clocks(void) {
   mach_timebase_info(&tb_cache);
   clock_core_bind(real_ticks, real_rt_ns, tb_cache.numer, tb_cache.denom);
 
+  int64_t true_rt;
+#ifdef SYS_clock_gettime
   struct timespec ts;
   if (syscall(SYS_clock_gettime, CLOCK_REALTIME, &ts) != 0) return -1;
-  int64_t true_rt = (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+  true_rt = (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+#else
+  // tvOS/macCatalyst: syscall(2) unavailable; read the wall clock before
+  // any breakpoint exists, so calling gettimeofday directly here is safe
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  true_rt = (int64_t)tv.tv_sec * 1000000000LL + (int64_t)tv.tv_usec * 1000;
+#endif
   rt_anchor_ns = true_rt - (int64_t)clock_core_ns_from_ticks(sys_mach_continuous_time());
   return 0;
 }
