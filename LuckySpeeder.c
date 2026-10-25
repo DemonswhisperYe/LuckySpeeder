@@ -56,6 +56,10 @@ static int (*sys_clock_gettime)(clockid_t, struct timespec *);
 static int (*sys_gettimeofday)(struct timeval *, void *);
 static uint64_t (*sys_mach_absolute_time)(void);
 static uint64_t (*sys_mach_continuous_time)(void);
+static uint64_t (*sys_clock_gettime_nsec_np)(clockid_t);
+static double (*sys_CACurrentMediaTime)(void);
+static double (*sys_CFAbsoluteTimeGetCurrent)(void);
+static time_t (*sys_time)(time_t *);
 static mach_timebase_info_data_t tb_cache;
 static int64_t rt_anchor_ns; // true wall clock at anchor minus continuous ns
 
@@ -123,6 +127,30 @@ static uint64_t my_mach_absolute_time(void) {
   return clock_core_mach_abs_time();
 }
 
+// clock_gettime_nsec_np: same timeline as clock_gettime, in ns
+static uint64_t my_clock_gettime_nsec_np(clockid_t clk_id) {
+  if (clk_id == CLOCK_REALTIME) return (uint64_t)clock_core_realtime_ns();
+  return clock_core_ns_from_ticks(clock_core_mach_abs_time());
+}
+
+// CACurrentMediaTime: QuartzCore seconds, monotonic line
+static double my_CACurrentMediaTime(void) {
+  return (double)clock_core_ns_from_ticks(clock_core_mach_abs_time()) / 1000000000.0;
+}
+
+// CFAbsoluteTimeGetCurrent: seconds since 2001-01-01, realtime line
+static double my_CFAbsoluteTimeGetCurrent(void) {
+  const double kCFAbsoluteTimeIntervalSince1970 = 978307200.0;
+  return (double)clock_core_realtime_ns() / 1000000000.0 - kCFAbsoluteTimeIntervalSince1970;
+}
+
+// time(): epoch seconds, realtime line
+static time_t my_time(time_t *tloc) {
+  time_t v = (time_t)(clock_core_realtime_ns() / 1000000000LL);
+  if (tloc) *tloc = v;
+  return v;
+}
+
 // ---- hook installation (Club mode) ----
 
 static int hooks_installed = 0;
@@ -151,10 +179,23 @@ int hook_clock_gettime(void) {
   //    pass through the app's GOT). That is exactly why the fishhook-only
   //    build did not move the game while the breakpoint build did. A
   //    breakpoint sits on the function entry and catches every caller.
-  struct rebinding rebindings[1] = {
+  // Every time source the game imports must share one timeline, otherwise
+  // the anti-cheat divides an accelerated clock by a real one and reports
+  // "abnormal game behaviour". All of these are rebindable through the
+  // app's own GOT, so they cost nothing per call.
+  sys_clock_gettime_nsec_np = dlsym(RTLD_DEFAULT, "clock_gettime_nsec_np");
+  sys_CACurrentMediaTime = dlsym(RTLD_DEFAULT, "CACurrentMediaTime");
+  sys_CFAbsoluteTimeGetCurrent = dlsym(RTLD_DEFAULT, "CFAbsoluteTimeGetCurrent");
+  sys_time = dlsym(RTLD_DEFAULT, "time");
+
+  struct rebinding rebindings[5] = {
     { "mach_absolute_time", my_mach_absolute_time, (void **)&sys_mach_absolute_time },
+    { "clock_gettime_nsec_np", my_clock_gettime_nsec_np, (void **)&sys_clock_gettime_nsec_np },
+    { "CACurrentMediaTime", my_CACurrentMediaTime, (void **)&sys_CACurrentMediaTime },
+    { "CFAbsoluteTimeGetCurrent", my_CFAbsoluteTimeGetCurrent, (void **)&sys_CFAbsoluteTimeGetCurrent },
+    { "time", my_time, (void **)&sys_time },
   };
-  if (rebind_symbols(rebindings, 1) != 0) return -1;
+  if (rebind_symbols(rebindings, 5) != 0) return -1;
 
 #if !TARGET_OS_TV
   void *old[2] = { (void *)sys_clock_gettime, (void *)sys_gettimeofday };
@@ -178,10 +219,14 @@ void reset_clock_gettime(void) {
   hwbp_unhook(old, 2);
 #endif
 
-  struct rebinding rebindings[1] = {
+  struct rebinding rebindings[5] = {
     { "mach_absolute_time", (void *)sys_mach_absolute_time, NULL },
+    { "clock_gettime_nsec_np", (void *)sys_clock_gettime_nsec_np, NULL },
+    { "CACurrentMediaTime", (void *)sys_CACurrentMediaTime, NULL },
+    { "CFAbsoluteTimeGetCurrent", (void *)sys_CFAbsoluteTimeGetCurrent, NULL },
+    { "time", (void *)sys_time, NULL },
   };
-  rebind_symbols(rebindings, 1);
+  rebind_symbols(rebindings, 5);
   clock_core_reset();
   hooks_installed = 0;
 }
