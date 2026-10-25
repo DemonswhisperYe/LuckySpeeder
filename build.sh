@@ -87,7 +87,7 @@ for target in "$@"; do
             -flto \
             -fvisibility=hidden \
             -Wl,-x \
-            fishhook.c LuckySpeeder.c LuckySpeederView.m Main.m \
+            fishhook.c clock_core.c LuckySpeeder.c LuckySpeederView.m Main.m \
             -framework Foundation \
             -framework UIKit \
             -o $out_dir/LuckySpeeder.dylib
