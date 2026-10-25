@@ -19,12 +19,16 @@ void clock_core_set_speed(double speed);
 double clock_core_speed(void);
 void clock_core_reset(void);
 
-// Scaled reads. clock_gettime(CLOCK_MONOTONIC family) and
-// mach_absolute_time share the monotonic line; CLOCK_REALTIME and
-// gettimeofday share the realtime line. Both lines advance at the
-// same speed, so cross-checking any two sources stays consistent.
-uint64_t clock_core_mach_abs_time(void);   // ticks (monotonic line)
-int64_t  clock_core_realtime_ns(void);     // ns (realtime line)
+// Scaled reads. clock_gettime(CLOCK_MONOTONIC family), mach_absolute_time
+// and clock_gettime_nsec_np(monotonic ids) share the monotonic line, which
+// runs at `speed`.
+//
+// clock_core_realtime_ns() deliberately does NOT scale: it returns the real
+// wall clock. CLOCK_REALTIME / gettimeofday / time() / CFAbsoluteTime-
+// GetCurrent all route through it, and a fast wall clock is directly
+// observable by the server as timestamp drift.
+uint64_t clock_core_mach_abs_time(void);   // ticks (monotonic line, scaled)
+int64_t  clock_core_realtime_ns(void);     // ns (real wall clock, unscaled)
 uint64_t clock_core_ns_from_ticks(uint64_t ticks); // ticks -> ns, cached timebase
 
 #ifdef __cplusplus

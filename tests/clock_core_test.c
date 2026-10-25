@@ -30,15 +30,15 @@ int main(void) {
   uint64_t v = clock_core_mach_abs_time();
   assert(v == 7000); // 2000 + 1000*5
 
-  // ---- realtime line independent of monotonic jumps ----
+  // ---- realtime line: never scaled, independent of monotonic jumps ----
   fake_rt = NS(1750000000ull * 1000000000ull);
   int64_t r0 = clock_core_realtime_ns();
-  assert(r0 == fake_rt); // seed at real wall time
+  assert(r0 == fake_rt); // real wall time
 
   fake_rt += NS(1000000000ull); // +1s real
   clock_core_set_speed(5.0);
   int64_t r1 = clock_core_realtime_ns();
-  assert(r1 == fake_rt + NS(4 * 1000000000ull)); // +1s*5
+  assert(r1 == fake_rt); // NOT scaled: server can cross-check this one
 
   // monotonic unaffected by realtime calls (the original bug)
   fake_ticks += 1000;
@@ -51,10 +51,10 @@ int main(void) {
   uint64_t v3 = clock_core_mach_abs_time();
   assert(v3 == 12200); // 12000 + 100*2
 
-  // ---- realtime goes backwards must not corrupt monotonic ----
+  // ---- realtime going backwards must not corrupt monotonic ----
   fake_rt -= NS(5000000000ull);
   int64_t r2 = clock_core_realtime_ns();
-  (void)r2;
+  assert(r2 == fake_rt); // passthrough, no clamping
   fake_ticks += 100;
   uint64_t v4 = clock_core_mach_abs_time();
   assert(v4 == 12400); // 12200 + 100*2

@@ -1,7 +1,17 @@
-// Unified virtual clock: every hooked entry reads from the same scaled
-// timeline, per-clock anchored. Fixes the shared-accumulator bug where
-// CLOCK_REALTIME (~1.75e9 s) and CLOCK_MONOTONIC (~1e5 s) alternation
-// pushed wall time centuries ahead and tripped server-side sanity checks.
+// Unified virtual clock. The monotonic line is scaled; the realtime line
+// is NOT.
+//
+// Why realtime must stay real: the server owns a true wall clock. Any
+// timestamp the client derives from CLOCK_REALTIME / gettimeofday / time()
+// / CFAbsoluteTimeGetCurrent can be compared against it, so accelerating
+// those exposes the speed factor as drift of (speed-1)*elapsed. The game's
+// own frame clock is monotonic (mach_absolute_time and
+// clock_gettime_nsec_np(CLOCK_HIGHRES)), which no server can cross-check.
+//
+// History: an earlier version put both lines on one speed and tripped the
+// anti-cheat's virtual-time detector (RHB_TM_E_VTD_*); before that, a
+// shared accumulator mixed CLOCK_REALTIME (~1.75e9 s) with CLOCK_MONOTONIC
+// (~1e5 s) and pushed wall time centuries ahead.
 #include "clock_core.h"
 
 #ifdef __APPLE__
@@ -33,7 +43,7 @@ typedef struct {
   uint8_t  primed;
 } line_t;
 
-static line_t mono = {0}, rt = {0};
+static line_t mono = {0};
 
 void clock_core_bind(uint64_t (*rticks)(void), int64_t (*rtns)(void),
                      uint32_t numer, uint32_t denom) {
@@ -43,7 +53,6 @@ void clock_core_bind(uint64_t (*rticks)(void), int64_t (*rtns)(void),
   tb_numer = numer ? numer : 1;
   tb_denom = denom ? denom : 1;
   mono.primed = 0;
-  rt.primed = 0;
   CK_LOCK_UNLCK(lock);
 }
 
@@ -107,18 +116,12 @@ uint64_t clock_core_mach_abs_time(void) {
   return out;
 }
 
+// Realtime reads pass through untouched: scaling the wall clock is the
+// one thing a server can always detect, and the game does not need it for
+// speed (frame timing is monotonic).
 int64_t clock_core_realtime_ns(void) {
   CK_LOCK_LCK(lock);
-  int64_t real_now = real_rt_ns();
-  uint64_t now_ns = (uint64_t)real_now;
-  if (!rt.primed) {
-    rt.real = now_ns; // l->real unit: ns
-    rt.virt = now_ns;
-    rt.primed = 1;
-  } else {
-    advance_ns(&rt, now_ns, speed);
-  }
-  int64_t out = (int64_t)rt.virt;
+  int64_t now = real_rt_ns();
   CK_LOCK_UNLCK(lock);
-  return out;
+  return now;
 }

@@ -94,12 +94,16 @@ static int bind_real_clocks(void) {
   return 0;
 }
 
-// ---- hooked entries: every source reads the same virtual timeline ----
+// ---- hooked entries ----
+//
+// Split by line, not by API family: the monotonic line is scaled, the
+// realtime line passes the real wall clock through unchanged. Anything the
+// server could cross-check stays honest.
 
-// clock_gettime: per-clk_id handling. All monotonic-family ids share the
-// mono line; REALTIME shares the rt line. No shared accumulator across
-// kinds (the old code mixed 1.75e9-s wall time and 1e5-s uptime in one
-// accumulator and pushed wall time centuries ahead at speed>1).
+// clock_gettime: monotonic-family ids ride the scaled mono line; REALTIME
+// returns the real wall clock. No shared accumulator across kinds (the old
+// code mixed 1.75e9-s wall time and 1e5-s uptime in one accumulator and
+// pushed wall time centuries ahead at speed>1).
 static int my_clock_gettime(clockid_t clk_id, struct timespec *tp) {
   if (clk_id == CLOCK_REALTIME) {
     int64_t ns = clock_core_realtime_ns();
@@ -127,7 +131,8 @@ static uint64_t my_mach_absolute_time(void) {
   return clock_core_mach_abs_time();
 }
 
-// clock_gettime_nsec_np: same timeline as clock_gettime, in ns
+// clock_gettime_nsec_np: same split as clock_gettime, in ns. CLOCK_HIGHRES
+// and friends ride the mono line; CLOCK_REALTIME stays real.
 static uint64_t my_clock_gettime_nsec_np(clockid_t clk_id) {
   if (clk_id == CLOCK_REALTIME) return (uint64_t)clock_core_realtime_ns();
   return clock_core_ns_from_ticks(clock_core_mach_abs_time());
@@ -138,13 +143,13 @@ static double my_CACurrentMediaTime(void) {
   return (double)clock_core_ns_from_ticks(clock_core_mach_abs_time()) / 1000000000.0;
 }
 
-// CFAbsoluteTimeGetCurrent: seconds since 2001-01-01, realtime line
+// CFAbsoluteTimeGetCurrent: seconds since 2001-01-01, real wall clock
 static double my_CFAbsoluteTimeGetCurrent(void) {
   const double kCFAbsoluteTimeIntervalSince1970 = 978307200.0;
   return (double)clock_core_realtime_ns() / 1000000000.0 - kCFAbsoluteTimeIntervalSince1970;
 }
 
-// time(): epoch seconds, realtime line
+// time(): epoch seconds, real wall clock
 static time_t my_time(time_t *tloc) {
   time_t v = (time_t)(clock_core_realtime_ns() / 1000000000LL);
   if (tloc) *tloc = v;
