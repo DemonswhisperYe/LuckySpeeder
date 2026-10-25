@@ -38,6 +38,10 @@ SOFTWARE.
 #include <time.h>
 #include <unistd.h>
 
+#if !TARGET_OS_TV
+#include "hwbphook.h"
+#endif
+
 // ---- real clock providers ----
 // The three hooked entries (clock_gettime/gettimeofday/mach_absolute_time)
 // carry hardware breakpoints on their FIRST instruction. Calling any of
@@ -133,20 +137,31 @@ int hook_clock_gettime(void) {
     return -1;
   if (bind_real_clocks() != 0) return -1;
 
-  // fishhook (GOT rebinding) for every target: hw breakpoints turned out
-  // to be an exception storm. mach_absolute_time is one of the hottest
-  // functions in the process (UIKit/GCD/objc call it thousands of times
-  // per frame); each hwbp hit costs a full Mach exception round-trip
-  // through the single-threaded mach_msg_server handler, so the queue
-  // backs up and the main thread starves (watchdog 0x8BADF00D, log 191544).
-  // GOT rebinding costs nothing per call and catches the same call set
-  // (every external call in the main binary goes through __stubs/GOT).
-  struct rebinding rebindings[3] = {
-    { "clock_gettime", my_clock_gettime, (void **)&sys_clock_gettime },
-    { "gettimeofday", my_gettimeofday, (void **)&sys_gettimeofday },
+  // Two mechanisms, chosen per call frequency:
+  //
+  // 1) mach_absolute_time is the hottest call in the process (UIKit, GCD
+  //    and objc hit it thousands of times per frame). A hardware
+  //    breakpoint there costs a Mach exception round-trip per call and
+  //    starved the main thread (watchdog 0x8BADF00D, log 191544), so its
+  //    GOT slots are rebound instead: zero cost per call.
+  //
+  // 2) clock_gettime / gettimeofday are low frequency, but the engine's
+  //    frame clock reaches them through system-library internal calls that
+  //    GOT rebinding cannot see (calls inside libsystem/QuartzCore never
+  //    pass through the app's GOT). That is exactly why the fishhook-only
+  //    build did not move the game while the breakpoint build did. A
+  //    breakpoint sits on the function entry and catches every caller.
+  struct rebinding rebindings[1] = {
     { "mach_absolute_time", my_mach_absolute_time, (void **)&sys_mach_absolute_time },
   };
-  if (rebind_symbols(rebindings, 3) != 0) return -1;
+  if (rebind_symbols(rebindings, 1) != 0) return -1;
+
+#if !TARGET_OS_TV
+  void *old[2] = { (void *)sys_clock_gettime, (void *)sys_gettimeofday };
+  void *new[2] = { (void *)my_clock_gettime, (void *)my_gettimeofday };
+  if (!hwbp_hook(old, new, 2)) return -1;
+#endif
+
   hooks_installed = 1;
   return 0;
 }
@@ -158,14 +173,15 @@ void set_clock_gettime(float value) {
 void reset_clock_gettime(void) {
   if (!hooks_installed) return;
 
-  // rebind back to the real implementations; fishhook rewrites the GOT
-  // slots by symbol name, so passing the real addresses restores them
-  struct rebinding rebindings[3] = {
-    { "clock_gettime", (void *)sys_clock_gettime, NULL },
-    { "gettimeofday", (void *)sys_gettimeofday, NULL },
+#if !TARGET_OS_TV
+  void *old[2] = { (void *)sys_clock_gettime, (void *)sys_gettimeofday };
+  hwbp_unhook(old, 2);
+#endif
+
+  struct rebinding rebindings[1] = {
     { "mach_absolute_time", (void *)sys_mach_absolute_time, NULL },
   };
-  rebind_symbols(rebindings, 3);
+  rebind_symbols(rebindings, 1);
   clock_core_reset();
   hooks_installed = 0;
 }
