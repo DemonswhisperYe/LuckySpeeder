@@ -33,28 +33,52 @@ SOFTWARE.
 #include <mach/mach_time.h>
 #include <os/lock.h>
 #include <stdint.h>
+#include <sys/syscall.h>
 #include <sys/time.h>
 #include <time.h>
+#include <unistd.h>
 
 #if !TARGET_OS_TV
 #include "hwbphook.h"
 #endif
 
-// ---- real clock providers (captured before hwbp hooks go live) ----
-
+// ---- real clock providers ----
+// The three hooked entries (clock_gettime/gettimeofday/mach_absolute_time)
+// carry hardware breakpoints on their FIRST instruction. Calling any of
+// them from inside a hook re-triggers the breakpoint and recurses into
+// the hook (recursive os_unfair_lock -> abort; crash log 1806). Real
+// time therefore must NEVER come from the hooked symbols:
+//   - monotonic: mach_continuous_time (separate symbol, same timebase,
+//     not breakpointed, reads the commpage so it is cheap)
+//   - wall: anchored once via raw syscall (immune to userland hooks),
+//     then derived as anchor + continuous ticks
 static int (*sys_clock_gettime)(clockid_t, struct timespec *);
 static int (*sys_gettimeofday)(struct timeval *, void *);
 static uint64_t (*sys_mach_absolute_time)(void);
+static uint64_t (*sys_mach_continuous_time)(void);
 static mach_timebase_info_data_t tb_cache;
-
-static int64_t real_rt_ns(void) {
-  struct timeval tv;
-  sys_gettimeofday(&tv, NULL);
-  return (int64_t)tv.tv_sec * 1000000000LL + (int64_t)tv.tv_usec * 1000;
-}
+static int64_t rt_anchor_ns; // true wall clock at anchor minus continuous ns
 
 static uint64_t real_ticks(void) {
-  return sys_mach_absolute_time();
+  return sys_mach_continuous_time();
+}
+
+static int64_t real_rt_ns(void) {
+  return rt_anchor_ns + (int64_t)clock_core_ns_from_ticks(real_ticks());
+}
+
+static int bind_real_clocks(void) {
+  sys_mach_continuous_time = (uint64_t (*)(void))dlsym(RTLD_DEFAULT, "mach_continuous_time");
+  if (!sys_mach_continuous_time) return -1;
+
+  mach_timebase_info(&tb_cache);
+  clock_core_bind(real_ticks, real_rt_ns, tb_cache.numer, tb_cache.denom);
+
+  struct timespec ts;
+  if (syscall(SYS_clock_gettime, CLOCK_REALTIME, &ts) != 0) return -1;
+  int64_t true_rt = (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+  rt_anchor_ns = true_rt - (int64_t)clock_core_ns_from_ticks(sys_mach_continuous_time());
+  return 0;
 }
 
 // ---- hooked entries: every source reads the same virtual timeline ----
@@ -97,6 +121,13 @@ static int hooks_installed = 0;
 int hook_clock_gettime(void) {
   if (hooks_installed) return 0;
 
+  sys_clock_gettime = dlsym(RTLD_DEFAULT, "clock_gettime");
+  sys_gettimeofday = dlsym(RTLD_DEFAULT, "gettimeofday");
+  sys_mach_absolute_time = dlsym(RTLD_DEFAULT, "mach_absolute_time");
+  if (!sys_clock_gettime || !sys_gettimeofday || !sys_mach_absolute_time)
+    return -1;
+  if (bind_real_clocks() != 0) return -1;
+
 #if TARGET_OS_TV
   if (TARGET_OS_TV) {
     struct rebinding rebindings[] = {
@@ -105,23 +136,14 @@ int hook_clock_gettime(void) {
       { "mach_absolute_time", my_mach_absolute_time, (void *)&sys_mach_absolute_time },
     };
     if (rebind_symbols(rebindings, 3) != 0) return -1;
-    mach_timebase_info(&tb_cache);
-    clock_core_bind(real_ticks, real_rt_ns, tb_cache.numer, tb_cache.denom);
     hooks_installed = 1;
     return 0;
   }
 #endif
 
 #if !TARGET_OS_TV
-  // capture originals before hwbp redirect
-  sys_clock_gettime = dlsym(RTLD_DEFAULT, "clock_gettime");
-  sys_gettimeofday = dlsym(RTLD_DEFAULT, "gettimeofday");
-  sys_mach_absolute_time = dlsym(RTLD_DEFAULT, "mach_absolute_time");
-  if (!sys_clock_gettime || !sys_gettimeofday || !sys_mach_absolute_time)
-    return -1;
-  mach_timebase_info(&tb_cache);
-  clock_core_bind(real_ticks, real_rt_ns, tb_cache.numer, tb_cache.denom);
-
+  // capture breakpoint target addresses (never called: the breakpoints
+  // sit on these exact addresses, calling them would recurse)
   void *originals[3] = {
     (void *)sys_clock_gettime,
     (void *)sys_gettimeofday,
