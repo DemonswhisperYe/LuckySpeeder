@@ -7,7 +7,7 @@
 
 Hacking Applications: A Universal Game Speed Controller
 
-Click Heart, Spade, Club, Diamond, Star to switch modes.
+Click Club, Diamond to switch modes.
 
 Click Forward, Backward to adjust the speed.
 
@@ -81,10 +81,9 @@ clang -shared \
     -fvisibility=hidden \
     -Wl,-x \
     -fuse-ld=lld \
-    mach_excServer.c hwbphook.c port_clock_gettime.c fishhook.c LuckySpeeder.c LuckySpeeder.m LuckySpeederView.m Main.m \
+    mach_excServer.c hwbphook.c port_clock_gettime.c fishhook.c LuckySpeeder.c LuckySpeederView.m Main.m \
     -framework Foundation \
     -framework UIKit \
-    -framework SpriteKit \
     -o LuckySpeeder.dylib
 ```
 

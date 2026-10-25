@@ -26,10 +26,9 @@ for target in "$@"; do
             -flto \
             -fvisibility=hidden \
             -Wl,-x \
-            mach_excServer.c hwbphook.c port_clock_gettime.c fishhook.c LuckySpeeder.c LuckySpeeder.m LuckySpeederView.m Main.m \
+            mach_excServer.c hwbphook.c port_clock_gettime.c fishhook.c clock_core.c LuckySpeeder.c LuckySpeederView.m Main.m \
             -framework Foundation \
             -framework UIKit \
-            -framework SpriteKit \
             -o $out_dir/LuckySpeeder.dylib
         ;;
     arm64-apple-ios-macabi)
@@ -48,10 +47,9 @@ for target in "$@"; do
             -flto \
             -fvisibility=hidden \
             -Wl,-x \
-            mach_excServer.c hwbphook.c port_clock_gettime.c fishhook.c LuckySpeeder.c LuckySpeeder.m LuckySpeederView.m Main.m \
+            mach_excServer.c hwbphook.c port_clock_gettime.c fishhook.c clock_core.c LuckySpeeder.c LuckySpeederView.m Main.m \
             -framework Foundation \
             -framework UIKit \
-            -framework SpriteKit \
             -o $out_dir/LuckySpeeder.dylib
         ;;
     arm64-apple-xros)
@@ -69,10 +67,9 @@ for target in "$@"; do
             -flto \
             -fvisibility=hidden \
             -Wl,-x \
-            mach_excServer.c hwbphook.c port_clock_gettime.c fishhook.c LuckySpeeder.c LuckySpeeder.m LuckySpeederView.m Main.m \
+            mach_excServer.c hwbphook.c port_clock_gettime.c fishhook.c clock_core.c LuckySpeeder.c LuckySpeederView.m Main.m \
             -framework Foundation \
             -framework UIKit \
-            -framework SpriteKit \
             -o $out_dir/LuckySpeeder.dylib
         ;;
     arm64-apple-tvos)
@@ -90,10 +87,9 @@ for target in "$@"; do
             -flto \
             -fvisibility=hidden \
             -Wl,-x \
-            fishhook.c LuckySpeeder.c LuckySpeeder.m LuckySpeederView.m Main.m \
+            fishhook.c LuckySpeeder.c LuckySpeederView.m Main.m \
             -framework Foundation \
             -framework UIKit \
-            -framework SpriteKit \
             -o $out_dir/LuckySpeeder.dylib
         ;;
     *)

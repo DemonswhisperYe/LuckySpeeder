@@ -31,20 +31,14 @@ SOFTWARE.
 #define LuckySpeederWrap_H
 
 enum SpeedMode {
-  Heart = 0,
-  Spade = 1,
-  Club = 2,
-  Diamond = 3,
-  Star = 4
+  Club = 0,
+  Diamond = 1
 };
-enum SpeedMode currentMod = Heart;
+enum SpeedMode currentMod = Club;
 
 const char *modeSymbols[] = {
-  "suit.heart.fill",
-  "suit.spade.fill",
   "suit.club.fill",
-  "suit.diamond.fill",
-  "star.fill"
+  "suit.diamond.fill"
 };
 const int modeSymbolsCount = sizeof(modeSymbols) / sizeof(char *);
 
@@ -63,55 +57,31 @@ void resetHook(void);
 
 int initHook(void) {
   switch (currentMod) {
-  case Heart:
-    return hook_timeScale();
-  case Spade:
-    return hook_gettimeofday();
   case Club:
     return hook_clock_gettime();
   case Diamond:
     return hook_mach_absolute_time();
-  case Star:
-    return hook_SKScene_update();
   }
 }
 
 void resetHook(void) {
   switch (currentMod) {
-  case Heart:
-    reset_timeScale();
-    return;
-  case Spade:
-    reset_gettimeofday();
-    return;
   case Club:
     reset_clock_gettime();
     return;
   case Diamond:
     reset_mach_absolute_time();
     return;
-  case Star:
-    reset_SKScene_update();
-    return;
   }
 }
 
 void updateSpeed(float value) {
   switch (currentMod) {
-  case Heart:
-    set_timeScale(value);
-    return;
-  case Spade:
-    set_gettimeofday(value);
-    return;
   case Club:
     set_clock_gettime(value);
     return;
   case Diamond:
     set_mach_absolute_time(value);
-    return;
-  case Star:
-    set_SKScene_update(value);
     return;
   }
 }
