@@ -41,8 +41,8 @@ jobs:
           set -euo pipefail
           cd dist
           for d in */; do
-            target="${d%/}"
-            cp "$d/LuckySpeeder.dylib" "LuckySpeeder-$target.dylib"
+            target="${d%/}"   # artifact dir is already named LuckySpeeder-<target>
+            cp "$d/LuckySpeeder.dylib" "$target.dylib"
           done
           ls -l
 
